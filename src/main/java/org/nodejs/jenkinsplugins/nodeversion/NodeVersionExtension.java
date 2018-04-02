@@ -23,6 +23,7 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.util.Collection;
 import java.util.List;
 import java.util.Iterator;
@@ -55,11 +56,10 @@ public class NodeVersionExtension extends GitSCMExtension {
             throws IOException, InterruptedException, GitException {
 
         if (exportNodejsVersion) {
-            String nodejsVersion = parseNodejsVersion(git.getWorkTree());
+            String nodejsVersion = parseNodejsVersion(git.getWorkTree(), listener.getLogger());
 
             if (nodejsVersion != null) {
                 String nodejsMajorVersion = nodejsVersion.split("\\.")[0];
-
                 listener.getLogger().println("Exporting environment variable " + ENV_VAR_NODEJS_VERSION + " with Node.js version '" + nodejsVersion + "'");
                 listener.getLogger().println("Exporting environment variable " + ENV_VAR_NODEJS_MAJOR_VERSION + " with Node.js major version '" + nodejsMajorVersion + "'");
                 build.addAction(new NodeVersionAction(nodejsVersion, nodejsMajorVersion));
@@ -83,39 +83,44 @@ public class NodeVersionExtension extends GitSCMExtension {
         }
     }
 
-    private String parseNodejsVersion(FilePath workspace) {
+    private String parseNodejsVersion(FilePath workspace, final PrintStream logger) {
         try {
-            return workspace.act(new MasterToSlaveFileCallable<String>() {
-                public String invoke(File f, VirtualChannel channel) {
-                    String major = null, minor = null, patch = null;
-                    try {
-                        BufferedReader in = new BufferedReader(new FileReader(new File(f, "src/node_version.h")));
-                        String line;
-
-                        while ((line = in.readLine()) != null) {
-                            if (line.indexOf("define NODE_MAJOR_VERSION ") > -1) {
-                                major = line.split(" NODE_MAJOR_VERSION ")[1].trim();
-                            } else if (line.indexOf("define NODE_MINOR_VERSION ") > -1) {
-                                minor = line.split(" NODE_MINOR_VERSION ")[1].trim();
-                            } else if (line.indexOf("define NODE_PATCH_VERSION ") > -1) {
-                                patch = line.split(" NODE_PATCH_VERSION ")[1].trim();
-                            }
-                        }
-
-                        in.close();
-                    } catch (Exception e) {
-                    }
-                    if (major != null && minor != null && patch != null) {
-                        return major + "." + minor + "." + patch;
-                    }
-
-                    return null;
-                }
-            });
+            return workspace.act(new NodeVersionParserCallable());
         } catch (Exception e) {
+            logger.println("Got error attempting to parse Node.js version from remote:");
+            e.printStackTrace(logger);
         }
 
         return null;
+    }
+
+    private final static class NodeVersionParserCallable extends MasterToSlaveFileCallable<String> {
+        @Override
+        public String invoke(File f, VirtualChannel channel) {
+            String major = null, minor = null, patch = null;
+            try {
+                BufferedReader in = new BufferedReader(new FileReader(new File(f, "src/node_version.h")));
+                String line;
+
+                while ((line = in.readLine()) != null) {
+                    if (line.indexOf("define NODE_MAJOR_VERSION ") > -1) {
+                        major = line.split(" NODE_MAJOR_VERSION ")[1].trim();
+                    } else if (line.indexOf("define NODE_MINOR_VERSION ") > -1) {
+                        minor = line.split(" NODE_MINOR_VERSION ")[1].trim();
+                    } else if (line.indexOf("define NODE_PATCH_VERSION ") > -1) {
+                        patch = line.split(" NODE_PATCH_VERSION ")[1].trim();
+                    }
+                }
+
+                in.close();
+            } catch (Exception e) {
+            }
+            if (major != null && minor != null && patch != null) {
+                return major + "." + minor + "." + patch;
+            }
+
+            return null;
+        }
     }
 
     @Extension
